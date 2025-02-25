@@ -4,8 +4,8 @@ import math
 import time
 TITLE = "Rogue"
 
-WH = 600
-WW = 800
+WH = 480*2
+WW = 620*2
 
 HALLWAY_WIDTH = 128
 
@@ -34,12 +34,12 @@ SHOOT_LEFT = False
 SHOOT_RIGHT = False
 
 SPACE = False
-
+#these dont change between leves
 level = 0
-window = None
-current_map = None
-current_player = None
+enemies_killed = 0
+coins = 0
 
+window = None
 ingame_ui_objects = []
 
 cam_x = 0
@@ -49,6 +49,12 @@ cam_target_x = 0
 cam_target_y = 0
 
 cam_lerp_weight = 10
+
+#these change between leves
+current_map = None
+current_player = None
+
+
 
 def update_camera_position():
     global cam_y
@@ -122,7 +128,7 @@ class GameObject:
             return
         window.blit(self.sprite, ((-cam_x+WW/2) + (self.x-self.sprite.get_width()/2), (-cam_y+WH/2) + (self.y-self.sprite.get_height()/2) ))
         #DEBUGGING
-        pygame.draw.rect(window, (255, 0, 0), self.collider, 1)
+        #pygame.draw.rect(window, (255, 0, 0), self.collider, 1)
 
 class Door(GameObject):
     def __init__(self, x, y, hallway, direction, room):
@@ -176,11 +182,13 @@ class Door(GameObject):
                 global is_paused
                 is_paused = False
                 if self.direction == 1:
+                    self.player.invincibility_start_time = time.time()
                     self.player.current_room = self.hallway.room2
                     self.player.move(self.player.x+x_offset, self.player.y+y_offset)
                     
 
                 if self.direction == -1:
+                    self.player.invincibility_start_time = time.time()
                     self.player.current_room = self.hallway.room1
                     self.player.move(self.player.x-x_offset, self.player.y-y_offset)
                     
@@ -194,6 +202,13 @@ class Door(GameObject):
     def render(self, window):
         pygame.draw.circle(window, (255, 255, 255), ((-cam_x+WW/2) + self.x, (-cam_y+WH/2)+ self.y), 8)
 
+class Elevator(GameObject):
+    def __init__(self, x, y, room):
+        super().__init__(x, y, door_sprite, room)
+
+    def enter(self):
+        load_new_map()
+        
 class Coin(GameObject):
     def __init__(self, x, y, room):
         super().__init__(x, y, coin_sprite, room)
@@ -206,17 +221,20 @@ class Enemy(GameObject):
         self.health = random.randint(1, level)
         self.target_x = self.x
         self.target_y = self.y
-        self.x_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
-        self.y_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+        self.x_offset = math.cos(random.randint(1, 20)/math.pi*2)*random.randint(40, 140)
+        self.y_offset = math.sin(random.randint(1, 20)/math.pi*2)*random.randint(40, 140)
         self.__near_player = False
         self.last_attack_time = time.time()
         self.attack_rate = 1.0
         self.damage = 1
+        self.speed = random.uniform(0.4, 1+(level/5))
     def take_damage(self):
         self.health -= Player.damage
         if self.health <= 0:
             self.die()
     def die(self):
+        global enemies_killed
+        enemies_killed += 1
         self.current_room.gameobjects.remove(self)
     
     def update(self, window):
@@ -227,18 +245,19 @@ class Enemy(GameObject):
         else:
             self.target_x = current_player.x
             self.target_y = current_player.y
-            self.x_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
-            self.y_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+            self.x_offset = math.cos(random.randint(1, 20)/math.pi*2)*random.randint(40, 140)
+            self.y_offset = math.sin(random.randint(1, 20)/math.pi*2)*random.randint(40, 140)
         self.__movement()
         range = 8
         if abs(self.target_x - self.x) < range and abs(self.target_y - self.y) < range:
             self.__near_player = not self.__near_player
         self.__do_damage()
+        
     def __do_damage(self):
         if time.time()-self.last_attack_time > self.attack_rate:
             if pygame.Rect.colliderect(self.collider, current_player.collider):
                 current_player.take_damage(self.damage)
-            self.last_attack_time = time.time()
+                self.last_attack_time = time.time()
     def __movement(self):
         if self.x == current_player.x and self.y == current_player.y: return
         direction = [0, 0]
@@ -249,7 +268,7 @@ class Enemy(GameObject):
         elif x_dif < 1: direction[1] = -1
         if y_dif > 1: direction[0] = 1
         elif y_dif < 1: direction[0] = -1
-        went_out_of_bounds = self.move(self.x + direction[1], self.y + direction[0])
+        went_out_of_bounds = self.move(self.x + (direction[1]*self.speed), self.y + (direction[0]*self.speed))
         if went_out_of_bounds:
             self.x_offset = -self.x_offset
             self.y_offset = -self.y_offset
@@ -259,24 +278,31 @@ class Bullet(GameObject):
     def __init__(self, x, y, room, direction):
         super().__init__(x, y, coin_sprite, room)
         self.direction = direction
+        self.__spawn_time = time.time()
     def update(self, window):
         super().update(window)
         went_out_of_bounds = self.move(self.x+self.direction[1]*Player.bullet_speed,
         self.y+self.direction[0]*Player.bullet_speed)
-        if went_out_of_bounds:
-            self.current_room.gameobjects.remove(self)
+        if went_out_of_bounds or time.time()-self.__spawn_time > Player.bullet_lifetime:
+            self.destroy_self()
+            
     def update_collision(self):
         for i in self.current_room.gameobjects:
             if isinstance(i, Enemy) and pygame.Rect.colliderect(self.collider, i.collider):
                 i.take_damage()
+                self.destroy_self()
+                return
+
     def render(self, window):
         pygame.draw.circle(window, (255, 0, 0), ((-cam_x+WW/2) + self.x, (-cam_y+WH/2)+ self.y), 5)
-
+    def destroy_self(self):
+        self.current_room.gameobjects.remove(self)
 class Player(GameObject):
     starting_speed = 5
     starting_health = 1
     damage = 1
-    range = 100
+    #therange is the lifetime of the bulletin seconds
+    bullet_lifetime = 0.2
     bullet_speed = 8
     fire_rate = 1.0
 
@@ -287,12 +313,12 @@ class Player(GameObject):
         current_player = self
         self.speed = Player.starting_speed
         self.health = Player.starting_health
-        self.max_coins = room_count
-        self.coins = 0
+        self.invicible = False
+        self.invincibility_start_time = 0
 
         self.__last_shot_time = time.time()
         arial_font = pygame.font.SysFont("Arial", 24)
-        self.text = UIText(20, 0, f"{self.coins}/{self.max_coins} Coins Collected", arial_font, (255, 255, 0))
+        self.text = UIText(20, 0, f"{coins} Coins Collected", arial_font, (255, 255, 0))
         global ingame_ui_objects
         ingame_ui_objects.append(self.text)
 
@@ -315,6 +341,9 @@ class Player(GameObject):
                 elif isinstance(i, Door) and SPACE:
                     if self.last_collider != i.collider:
                         i.enter(self)
+                elif isinstance(i, Elevator) and SPACE:
+                    if self.last_collider != i.collider:
+                        i.enter()
                 self.last_collider = i
     def __movement(self):
         direction = [0, 0]
@@ -347,20 +376,20 @@ class Player(GameObject):
         self.current_room.gameobjects.append(bullet)
         self.__last_shot_time = time.time()
     def take_damage(self, amount):
+        if time.time()-self.invincibility_start_time < 1.5: return
         self.health -= amount
         if self.health <= 0:
             self.die()
     def die(self):
-        print("Damage")
+        exit()
     def __collect_coin(self, coin):
-        self.coins += 1
+        global coins
+        coins += 1
         self.current_room.gameobjects.remove(coin)
-        self.text.text = f"{self.coins}/{self.max_coins} Coins Collected"
-        if self.coins >= self.max_coins:
-            load_new_map()
+        self.text.text = f"{coins} Coins Collected"
 
 class Room:
-    def __init__(self, location):
+    def __init__(self, location, is_first):
         self.location = location
         self.w = random.randint(300, 800)
         self.h = random.randint(200, 700)
@@ -370,7 +399,18 @@ class Room:
 
         self.gameobjects = []
         self.gameobjects.append(Coin(self.x, self.y, self))
-        self.gameobjects.append(Enemy(self.x, self.y, self))
+        for i in range(0, random.randint(2, pygame.math.clamp(level, 5, 8))):
+            temp_coin = Coin(self.x, self.y, self)
+            temp_coin.x = random.randint((self.x-self.w//2)+(temp_coin.collider.w//2), (self.x+self.w//2)-(temp_coin.collider.w//2))
+            temp_coin.y = random.randint((self.y-self.h//2)+(temp_coin.collider.h//2), (self.y+self.h//2)-(temp_coin.collider.h//2))
+            self.gameobjects.append(temp_coin)
+
+        if not is_first:
+            for i in range(0, random.randint(2, pygame.math.clamp(level, 5, 8))):
+                temp_enemy = Enemy(self.x, self.y, self)
+                temp_enemy.x = random.randint((self.x-self.w//2)+(temp_enemy.collider.w//2), (self.x+self.w//2)-(temp_enemy.collider.w//2))
+                temp_enemy.y = random.randint((self.y-self.h//2)+(temp_enemy.collider.h//2), (self.y+self.h//2)-(temp_enemy.collider.h//2))
+                self.gameobjects.append(temp_enemy)
 
     def update(self, window):
         for gameobject in self.gameobjects:
@@ -448,6 +488,8 @@ class Map:
         self.__generate_rooms()
         self.__generate_hallways()
 
+        elevator_room = random.choice(self.rooms)
+        elevator_room.gameobjects.append(Elevator(elevator_room.x, elevator_room.y, elevator_room))
         self.player = Player(self.rooms[0].x-(self.rooms[0].w/2)+30, self.rooms[0].y-(self.rooms[0].h/2)+50, self.rooms[0], len(self.rooms))
 
 
@@ -468,12 +510,16 @@ class Map:
         ingame_ui_objects.append(text)
 
     def __generate_rooms(self):
+        is_first = True
         for y in range(0, 4):
             for x in range(0, 4):
                 if random.randint(0, 4) != 1:
-                    self.rooms.append(Room((y, x)))
+                    self.rooms.append(Room((y, x), is_first))
+                    is_first = False
                 elif x > 1 and y > 1 and len([1 for i in self.rooms if i.location[1] == x]) < 2 and len([1 for i in self.rooms if i.location[1] == x]) < 2:
-                    self.rooms.append(Room((y, x)))
+                    self.rooms.append(Room((y, x), is_first))
+                    is_first = False
+                
 
     def __generate_hallways(self):
         for room in self.rooms:
