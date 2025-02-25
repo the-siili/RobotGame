@@ -1,7 +1,7 @@
 import pygame
 import random
 import math
-
+import time
 TITLE = "Rogue"
 
 WH = 600
@@ -17,7 +17,9 @@ door_sprite = pygame.transform.scale(door_sprite, (16, 32))
 
 coin_sprite = pygame.image.load("coin.png")
 coin_sprite = pygame.transform.scale(coin_sprite, (16, 16))
+
 monster_sprite = pygame.image.load("monster.png")
+monster_sprite = pygame.transform.scale(monster_sprite, (32, 48))
 
 is_paused = False
 
@@ -25,11 +27,18 @@ UP = False
 DOWN = False
 LEFT = False
 RIGHT = False
+
+SHOOT_UP = False
+SHOOT_DOWN = False
+SHOOT_LEFT = False
+SHOOT_RIGHT = False
+
 SPACE = False
 
 level = 0
 window = None
 current_map = None
+current_player = None
 
 ingame_ui_objects = []
 
@@ -87,7 +96,7 @@ class GameObject:
 
     def update_collision(self):
         pass
-
+    #Returns true if object went out of bounds druing movement
     def move(self, x, y):
         #checking if the object crossed the room border and teleport him back instantly
         #this is because the movement is updated with pixel, so the player could cross it by a few pixels
@@ -101,10 +110,12 @@ class GameObject:
         room_left = int(self.current_room.x-(self.current_room.w/2))
         room_right = int(self.current_room.x+(self.current_room.w/2))
 
-        if self.y-self.collider.height/2 < room_top: self.y = int(room_top+self.collider.height/2)
-        if self.y+self.collider.height/2 > room_bottom: self.y = int(room_bottom-self.collider.height/2)
-        if self.x-self.collider.width/2 < room_left: self.x = int(room_left+self.collider.width/2)
-        if self.x+self.collider.width/2 > room_right: self.x = int(room_right-self.collider.width/2)
+        out = False
+        if self.y-self.collider.height/2 < room_top: self.y = int(room_top+self.collider.height/2); out = True
+        if self.y+self.collider.height/2 > room_bottom: self.y = int(room_bottom-self.collider.height/2); out = True
+        if self.x-self.collider.width/2 < room_left: self.x = int(room_left+self.collider.width/2); out = True
+        if self.x+self.collider.width/2 > room_right: self.x = int(room_right-self.collider.width/2); out = True
+        return out
     
     def render(self, window):
         if self.sprite == None:
@@ -137,7 +148,6 @@ class Door(GameObject):
         super().update(window)
         if not self.is_animating:
             return
-        print("hi")
         self.player.x = pygame.math.lerp(self.player.x, self.next_point[1], 0.1)
         self.player.y = pygame.math.lerp(self.player.y, self.next_point[0], 0.1)
         if math.dist((self.player.x, self.player.y), (self.next_point[1], self.next_point[0])) < 3:
@@ -149,7 +159,6 @@ class Door(GameObject):
         cam_target_x = self.player.x
         cam_target_y = self.player.y
 
-        print(int(self.player.x), int(self.player.y), int(self.next_point[1]), int(self.next_point[0]))
         points = self.hallway.points.copy()
         if self.direction == -1:
             points.reverse()
@@ -190,16 +199,98 @@ class Coin(GameObject):
         super().__init__(x, y, coin_sprite, room)
     def update(self, window):
         super().update(window)
+
+class Enemy(GameObject):
+    def __init__(self, x, y, room):
+        super().__init__(x, y, monster_sprite, room)
+        self.health = random.randint(1, level)
+        self.target_x = self.x
+        self.target_y = self.y
+        self.x_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+        self.y_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+        self.__near_player = False
+        self.last_attack_time = time.time()
+        self.attack_rate = 1.0
+        self.damage = 1
+    def take_damage(self):
+        self.health -= Player.damage
+        if self.health <= 0:
+            self.die()
+    def die(self):
+        self.current_room.gameobjects.remove(self)
+    
+    def update(self, window):
+        super().update(window)
+        if not self.__near_player:
+            self.target_x = current_player.x + self.x_offset
+            self.target_y = current_player.y + self.y_offset
+        else:
+            self.target_x = current_player.x
+            self.target_y = current_player.y
+            self.x_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+            self.y_offset = random.choice((random.randint(-40, -20), random.randint(20, 40)))
+        self.__movement()
+        range = 8
+        if abs(self.target_x - self.x) < range and abs(self.target_y - self.y) < range:
+            self.__near_player = not self.__near_player
+        self.__do_damage()
+    def __do_damage(self):
+        if time.time()-self.last_attack_time > self.attack_rate:
+            if pygame.Rect.colliderect(self.collider, current_player.collider):
+                current_player.take_damage(self.damage)
+            self.last_attack_time = time.time()
+    def __movement(self):
+        if self.x == current_player.x and self.y == current_player.y: return
+        direction = [0, 0]
+        x_dif = self.target_x - self.x
+        y_dif = self.target_y - self.y
+
+        if x_dif > 1: direction[1] = 1
+        elif x_dif < 1: direction[1] = -1
+        if y_dif > 1: direction[0] = 1
+        elif y_dif < 1: direction[0] = -1
+        went_out_of_bounds = self.move(self.x + direction[1], self.y + direction[0])
+        if went_out_of_bounds:
+            self.x_offset = -self.x_offset
+            self.y_offset = -self.y_offset
+
+
+class Bullet(GameObject):
+    def __init__(self, x, y, room, direction):
+        super().__init__(x, y, coin_sprite, room)
+        self.direction = direction
+    def update(self, window):
+        super().update(window)
+        went_out_of_bounds = self.move(self.x+self.direction[1]*Player.bullet_speed,
+        self.y+self.direction[0]*Player.bullet_speed)
+        if went_out_of_bounds:
+            self.current_room.gameobjects.remove(self)
+    def update_collision(self):
+        for i in self.current_room.gameobjects:
+            if isinstance(i, Enemy) and pygame.Rect.colliderect(self.collider, i.collider):
+                i.take_damage()
     def render(self, window):
-        super().render(window)
+        pygame.draw.circle(window, (255, 0, 0), ((-cam_x+WW/2) + self.x, (-cam_y+WH/2)+ self.y), 5)
 
 class Player(GameObject):
+    starting_speed = 5
+    starting_health = 1
+    damage = 1
+    range = 100
+    bullet_speed = 8
+    fire_rate = 1.0
+
     def __init__(self, x, y, room, room_count):
         super().__init__(x, y, robot_sprite, room)
-        self.speed = 10
+
+        global current_player
+        current_player = self
+        self.speed = Player.starting_speed
+        self.health = Player.starting_health
         self.max_coins = room_count
         self.coins = 0
 
+        self.__last_shot_time = time.time()
         arial_font = pygame.font.SysFont("Arial", 24)
         self.text = UIText(20, 0, f"{self.coins}/{self.max_coins} Coins Collected", arial_font, (255, 255, 0))
         global ingame_ui_objects
@@ -210,6 +301,8 @@ class Player(GameObject):
         if is_paused: return
         self.__movement()
         self.__collision()
+        if time.time()-self.__last_shot_time >= Player.fire_rate:
+            self.__shoot()
 
     def update_collision(self):
         self.__collision()
@@ -222,7 +315,6 @@ class Player(GameObject):
                 elif isinstance(i, Door) and SPACE:
                     if self.last_collider != i.collider:
                         i.enter(self)
-                        print("It's Door")
                 self.last_collider = i
     def __movement(self):
         direction = [0, 0]
@@ -245,8 +337,21 @@ class Player(GameObject):
         global cam_target_x
         cam_target_y = self.y
         cam_target_x = self.x
-
-
+    def __shoot(self):
+        if not SHOOT_UP and not SHOOT_DOWN and not SHOOT_LEFT and not SHOOT_RIGHT: return
+        bullet = Bullet(self.x, self.y, self.current_room, [0, 0])
+        if SHOOT_UP: bullet.direction = [-1, 0]
+        if SHOOT_DOWN: bullet.direction = [1, 0]
+        if SHOOT_LEFT: bullet.direction = [0, -1]
+        if SHOOT_RIGHT: bullet.direction = [0, 1]
+        self.current_room.gameobjects.append(bullet)
+        self.__last_shot_time = time.time()
+    def take_damage(self, amount):
+        self.health -= amount
+        if self.health <= 0:
+            self.die()
+    def die(self):
+        print("Damage")
     def __collect_coin(self, coin):
         self.coins += 1
         self.current_room.gameobjects.remove(coin)
@@ -265,6 +370,7 @@ class Room:
 
         self.gameobjects = []
         self.gameobjects.append(Coin(self.x, self.y, self))
+        self.gameobjects.append(Enemy(self.x, self.y, self))
 
     def update(self, window):
         for gameobject in self.gameobjects:
@@ -426,6 +532,60 @@ def load_new_map():
     global current_map
     current_map = Map(window)
 
+def gather_input():
+    global UP
+    global DOWN
+    global LEFT
+    global RIGHT
+    global SPACE
+    global SHOOT_UP
+    global SHOOT_DOWN
+    global SHOOT_LEFT
+    global SHOOT_RIGHT
+    for event in pygame.event.get():
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_a:
+                LEFT = True
+            if event.key == pygame.K_d:
+                RIGHT = True
+            if event.key == pygame.K_w:
+                UP = True
+            if event.key == pygame.K_s:
+                DOWN = True
+            if event.key == pygame.K_SPACE:
+                SPACE = True
+
+            if event.key == pygame.K_LEFT:
+                SHOOT_LEFT = True
+            elif event.key == pygame.K_RIGHT:
+                SHOOT_RIGHT = True
+            elif event.key == pygame.K_UP:
+                SHOOT_UP = True
+            elif event.key == pygame.K_DOWN:
+                SHOOT_DOWN = True
+        
+        if event.type == pygame.KEYUP:
+            if event.key == pygame.K_a:
+                LEFT = False
+            if event.key == pygame.K_d:
+                RIGHT = False
+            if event.key == pygame.K_w:
+                UP = False
+            if event.key == pygame.K_s:
+                DOWN = False
+            if event.key == pygame.K_SPACE:
+                SPACE = False
+
+            if event.key == pygame.K_LEFT:
+                SHOOT_LEFT = False
+            elif event.key == pygame.K_RIGHT:
+                SHOOT_RIGHT = False
+            elif event.key == pygame.K_UP:
+                SHOOT_UP = False
+            elif event.key == pygame.K_DOWN:
+                SHOOT_DOWN = False
+        if event.type == pygame.QUIT:
+            exit()
 
 def main():
     pygame.init()
@@ -435,44 +595,12 @@ def main():
 
     clock = pygame.time.Clock()
 
-
-    global UP
-    global DOWN
-    global LEFT
-    global RIGHT
-    global SPACE
-
     global current_map
     current_map = Map(window)
 
     while True:
-        for event in pygame.event.get():
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
-                    LEFT = True
-                if event.key == pygame.K_RIGHT:
-                    RIGHT = True
-                if event.key == pygame.K_UP:
-                    UP = True
-                if event.key == pygame.K_DOWN:
-                    DOWN = True
-                if event.key == pygame.K_SPACE:
-                    SPACE = True
-            
-            if event.type == pygame.KEYUP:
-                if event.key == pygame.K_LEFT:
-                    LEFT = False
-                if event.key == pygame.K_RIGHT:
-                    RIGHT = False
-                if event.key == pygame.K_UP:
-                    UP = False
-                if event.key == pygame.K_DOWN:
-                    DOWN = False
-                if event.key == pygame.K_SPACE:
-                    SPACE = False
-            if event.type == pygame.QUIT:
-                exit()
-            
+        
+        gather_input()
         
         current_map.update()
 
