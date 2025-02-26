@@ -39,6 +39,8 @@ SHOOT_RIGHT = False
 
 SPACE = False
 
+ENTER = False
+
 #these dont change between leves
 level = 0
 enemies_killed = 0
@@ -139,8 +141,10 @@ class UIButton(UIObject):
         self.action_func = action_func
     def update(self):
         if self.selected:
-            if SPACE:
+            global ENTER
+            if ENTER:
                 self.action_func()
+                ENTER = False
 
     def render(self, window):
         pygame.draw.rect(window, self.color, (self.x, self.y, self.w, self.h))
@@ -156,7 +160,10 @@ class Menu:
     def update(self):
         for button in self.buttons:
             button.update()
+        global SHOOT_DOWN
+        global SHOOT_UP
         if SHOOT_DOWN:
+            SHOOT_DOWN = False
             selected_index = [i for i in range(0, len(self.buttons)) if self.buttons[i].selected][0]
 
             if selected_index != len(self.buttons)-1:
@@ -164,7 +171,7 @@ class Menu:
                 self.buttons[selected_index+1].selected = True
 
         elif SHOOT_UP:
-
+            SHOOT_UP = False
             selected_index = [i for i in range(0, len(self.buttons)) if self.buttons[i].selected][0]
             
             if selected_index != 0:
@@ -173,7 +180,7 @@ class Menu:
 
     def render(self):
         for i in self.ui_objects:
-            i.render()
+            i.render(window)
         for button in self.buttons:
             button.render(window)
 
@@ -209,6 +216,59 @@ class MainMenu(Menu):
                                 exit)
         self.buttons.append(self.quit_btn)
 
+class IntermissionMenu(Menu):
+    def __init__(self):
+        super().__init__()
+        self.ui_objects.append(UICircle(30, 30, 20, (255, 255, 0)))
+        arial_font = pygame.font.SysFont("Arial", 32)
+
+        self.coin_text = UIText(55, 14, str(coins), arial_font, (255, 255, 0))
+        self.ui_objects.append(self.coin_text)
+        self.max_health_text = UIText(10, 60, "♥"*Player.starting_health, arial_font, (255, 0, 0))
+        self.ui_objects.append(self.max_health_text)
+
+        self.__generate_button(100, "Upgrade Health", 50, self.__upgrade_health)
+        self.__generate_button(200, "Upgrade Damage", 32, self.__upgrade_damage)
+        self.__generate_button(300, "Upgrade Speed", 48, self.__upgrade_speed)
+        self.__generate_button(400, "Upgrade Firerate", 40, self.__upgrade_firerate)
+        self.__generate_button(500, "Upgrade Range", 48, self.__upgrade_range)
+        self.__generate_button(700, "Continue", 80, load_new_map)
+        self.buttons[0].selected = True
+
+
+    def __generate_button(self, y, text, text_x, func):
+        w = 300
+        h = 80
+        x = WW//2-w//2
+        arial_font = pygame.font.SysFont("Arial", 32)
+
+        textObj = UIText(x+text_x, y+18, text, arial_font, (255, 255, 255))
+        self.btn = UIButton(x, y, w, h, textObj, (30, 30, 30), False, func)
+        self.buttons.append(self.btn)
+
+    def remove_coins(amount):
+        if coins - amount >= 0:
+            coins -= amount
+            self.coin_text.text = str(coins)
+            return True
+        return False
+
+    def __upgrade_health(self):
+        Player.starting_health += 1
+        self.max_health_text.text = "♥"*Player.starting_health
+        print("upgraded health")
+
+    def __upgrade_damage(self):
+        print("upgraded damage")
+
+    def __upgrade_speed(self):
+        print("upgraded speed")
+
+    def __upgrade_firerate(self):
+        print("upgraded firerate")
+
+    def __upgrade_range(self):
+        print("upgraded range")
 
 class AnimObject:
     def __init__(self, length, animation_list):
@@ -241,6 +301,7 @@ class DamageAnim(AnimObject):
         self.sinx += 0.3
         self.rect.set_alpha((math.sin(self.sinx)+1)*128)
         window.blit(self.rect, ((-cam_x+WW/2) + (self.x-self.w/2), (-cam_y+WH/2) + (self.y-self.h/2)))
+
 
 
 class GameObject:
@@ -366,7 +427,7 @@ class Elevator(GameObject):
         super().__init__(x, y, door_sprite, room)
 
     def enter(self):
-        load_new_map()
+        load_menu(IntermissionMenu())
 
 class Coin(GameObject):
     def __init__(self, x, y, room):
@@ -434,7 +495,6 @@ class Enemy(GameObject):
             self.x_offset = -self.x_offset
             self.y_offset = -self.y_offset
 
-
 class Bullet(GameObject):
     def __init__(self, x, y, room, direction):
         super().__init__(x, y, coin_sprite, room)
@@ -461,7 +521,7 @@ class Bullet(GameObject):
 
 class Player(GameObject):
     starting_speed = 5
-    starting_health = 50
+    starting_health = 2
     damage = 1
     #therange is the lifetime of the bulletin seconds
     bullet_lifetime = 0.2
@@ -562,7 +622,7 @@ class Player(GameObject):
         if self.health <= 0:
             self.die()
     def die(self):
-        exit()
+        load_menu(MainMenu())
     def __collect_coin(self, coin):
         global coins
         coins += 1
@@ -592,6 +652,8 @@ class Room:
                 temp_enemy.x = random.randint((self.x-self.w//2)+(temp_enemy.collider.w//2), (self.x+self.w//2)-(temp_enemy.collider.w//2))
                 temp_enemy.y = random.randint((self.y-self.h//2)+(temp_enemy.collider.h//2), (self.y+self.h//2)-(temp_enemy.collider.h//2))
                 self.gameobjects.append(temp_enemy)
+        #DEBUGGIN
+        self.gameobjects.append(Elevator(self.x, self.y, self))
 
     def update(self, window):
         for gameobject in self.gameobjects:
@@ -761,6 +823,14 @@ class Map:
             room.render_outline(self.window)
 
 
+def load_menu(menu):
+    global current_map
+    current_map = None
+    global current_menu
+    current_menu = menu
+    global ingame_ui_objects
+    ingame_ui_objects.clear()
+    
 
 def load_new_map():
     global current_menu
@@ -780,6 +850,7 @@ def gather_input():
     global SHOOT_DOWN
     global SHOOT_LEFT
     global SHOOT_RIGHT
+    global ENTER
     for event in pygame.event.get():
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_a:
@@ -792,6 +863,9 @@ def gather_input():
                 DOWN = True
             if event.key == pygame.K_SPACE:
                 SPACE = True
+            
+            if event.key == pygame.K_RETURN:
+                ENTER = True
 
             if event.key == pygame.K_LEFT:
                 SHOOT_LEFT = True
@@ -814,6 +888,9 @@ def gather_input():
             if event.key == pygame.K_SPACE:
                 SPACE = False
 
+            if event.key == pygame.K_RETURN:
+                ENTER = False
+
             if event.key == pygame.K_LEFT:
                 SHOOT_LEFT = False
             elif event.key == pygame.K_RIGHT:
@@ -835,8 +912,7 @@ def main():
 
     #global current_map
     #current_map = Map(window)
-    global current_menu
-    current_menu = MainMenu()
+    load_menu(MainMenu())
     while True:
         
         gather_input()
@@ -854,9 +930,13 @@ def main():
             continue
 
         current_map.update()
-        current_map.update_collision()
+        try:current_map.update_collision()
+        except: pass
+
         window.fill((0, 0, 0))
-        current_map.render()
+
+        try:current_map.render()
+        except: pass
 
         global ingame_ui_objects
         for i in ingame_ui_objects:
