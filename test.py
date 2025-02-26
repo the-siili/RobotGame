@@ -21,6 +21,10 @@ coin_sprite = pygame.transform.scale(coin_sprite, (16, 16))
 monster_sprite = pygame.image.load("monster.png")
 monster_sprite = pygame.transform.scale(monster_sprite, (32, 48))
 
+
+ui_coin_sprite = pygame.image.load("coin.png")
+ui_coin_sprite = pygame.transform.scale(coin_sprite, (32, 32))
+
 is_paused = False
 
 UP = False
@@ -34,6 +38,7 @@ SHOOT_LEFT = False
 SHOOT_RIGHT = False
 
 SPACE = False
+
 #these dont change between leves
 level = 0
 enemies_killed = 0
@@ -41,6 +46,8 @@ coins = 0
 
 window = None
 ingame_ui_objects = []
+
+animation_objects = []
 
 cam_x = 0
 cam_y = 0
@@ -54,7 +61,7 @@ cam_lerp_weight = 10
 current_map = None
 current_player = None
 
-
+current_menu = None
 
 def update_camera_position():
     global cam_y
@@ -83,6 +90,158 @@ class UIText(UIObject):
 
     def render(self, window):
         window.blit(self.font.render(self.text, True, self.color), (self.x, self.y))
+
+class UISprite(UIObject):
+    def __init__(self, x, y, sprite):
+        super().__init__(x, y)
+        self.sprite = sprite
+
+    def render(self, window):
+        window.blit(self.sprite, (self.x, self.y))
+
+class UIRect(UIObject):
+    def __init__(self, x, y, w, h, color):
+        super().__init__(x, y)
+        self.w = w
+        self.h = h
+        self.color = color
+
+    def render(self, window):
+        pygame.draw.rect(window, self.color, (self.x, self.y, self.w, self.h))
+
+class UILine(UIObject):
+    def __init__(self, x, y, x2, y2, thickness, color):
+        super().__init__(x, y)
+        self.x2 = x2
+        self.y2 = y2
+        self.thickness = thickness
+        self.color = color
+
+    def render(self, window):
+        pygame.draw.line(window, self.color, (self.x, self.y), (self.x2, self.y2), self.thickness)
+
+class UICircle(UIObject):
+    def __init__(self, x, y, r, color):
+        super().__init__(x, y)
+        self.r = r
+        self.color = color
+    def render(self, window):
+        pygame.draw.circle(window, self.color, (self.x, self.y), self.r)
+
+class UIButton(UIObject):
+    def __init__(self, x, y, w, h, text:UIText, color, selected, action_func):
+        super().__init__(x, y)
+        self.w = w
+        self.h = h
+        self.color = color
+        self.selected = selected
+        self.ui_text = text
+        self.action_func = action_func
+    def update(self):
+        if self.selected:
+            if SPACE:
+                self.action_func()
+
+    def render(self, window):
+        pygame.draw.rect(window, self.color, (self.x, self.y, self.w, self.h))
+        if self.selected:
+            pygame.draw.rect(window, (255, 255, 255), (self.x, self.y, self.w, self.h), 3)
+        self.ui_text.render(window)
+
+class Menu:
+    def __init__(self):
+        self.ui_objects = []
+        self.buttons = []
+
+    def update(self):
+        for button in self.buttons:
+            button.update()
+        if SHOOT_DOWN:
+            selected_index = [i for i in range(0, len(self.buttons)) if self.buttons[i].selected][0]
+
+            if selected_index != len(self.buttons)-1:
+                self.buttons[selected_index].selected = False
+                self.buttons[selected_index+1].selected = True
+
+        elif SHOOT_UP:
+
+            selected_index = [i for i in range(0, len(self.buttons)) if self.buttons[i].selected][0]
+            
+            if selected_index != 0:
+                self.buttons[selected_index].selected = False
+                self.buttons[selected_index-1].selected = True
+
+    def render(self):
+        for i in self.ui_objects:
+            i.render()
+        for button in self.buttons:
+            button.render(window)
+
+class MainMenu(Menu):
+    def __init__(self):
+        super().__init__()
+        pb_w = 300
+        pb_h = 80
+        arial_font = pygame.font.SysFont("Arial", 32)
+        pb_text = UIText(WW//2-pb_w//2+120, WH//2-pb_h//2+18, "Play", arial_font, (255, 255, 255))
+        self.play_btn = UIButton(WW//2-pb_w//2, 
+                                WH//2-pb_h//2, 
+                                pb_w, 
+                                pb_h, 
+                                pb_text, 
+                                (30, 30, 30), 
+                                True, 
+                                load_new_map)
+        self.buttons.append(self.play_btn)
+
+        qb_w = 300
+        qb_h = 80
+        qb_x = WW//2-qb_w//2
+        qb_y = WH//2-qb_h//2+100
+        qb_text = UIText(qb_x+120, qb_y+18, "Quit", arial_font, (255, 255, 255))
+        self.quit_btn = UIButton(qb_x, 
+                                qb_y, 
+                                qb_w, 
+                                qb_h, 
+                                qb_text, 
+                                (30, 30, 30), 
+                                False, 
+                                exit)
+        self.buttons.append(self.quit_btn)
+
+
+class AnimObject:
+    def __init__(self, length, animation_list):
+        self.start_time = time.time()
+        self.length = length
+        self.animation_list = animation_list
+    
+    def animate(self, window):
+        if time.time()-self.start_time >= self.length:
+            self.animation_list.remove(self)
+
+class DamageAnim(AnimObject):
+    def __init__(self, length, animation_list, color, parent):
+        super().__init__(length, animation_list)
+        self.x = parent.x
+        self.y = parent.y
+        self.w = parent.collider.width
+        self.h = parent.collider.height
+        self.parent = parent
+
+        self.color = color
+        self.rect = pygame.Surface((self.w, self.h))  # the size of your rect
+        self.rect.fill(self.color) 
+        self.sinx = 1
+
+    def animate(self, window):
+        super().animate(window)
+        self.x = self.parent.x
+        self.y = self.parent.y
+        self.sinx += 0.3
+        self.rect.set_alpha((math.sin(self.sinx)+1)*128)
+        window.blit(self.rect, ((-cam_x+WW/2) + (self.x-self.w/2), (-cam_y+WH/2) + (self.y-self.h/2)))
+
 
 class GameObject:
     def __init__(self, x, y, sprite, room):
@@ -182,13 +341,13 @@ class Door(GameObject):
                 global is_paused
                 is_paused = False
                 if self.direction == 1:
-                    self.player.invincibility_start_time = time.time()
+                    self.player.start_invincibility()
                     self.player.current_room = self.hallway.room2
                     self.player.move(self.player.x+x_offset, self.player.y+y_offset)
                     
 
                 if self.direction == -1:
-                    self.player.invincibility_start_time = time.time()
+                    self.player.start_invincibility()
                     self.player.current_room = self.hallway.room1
                     self.player.move(self.player.x-x_offset, self.player.y-y_offset)
                     
@@ -208,7 +367,7 @@ class Elevator(GameObject):
 
     def enter(self):
         load_new_map()
-        
+
 class Coin(GameObject):
     def __init__(self, x, y, room):
         super().__init__(x, y, coin_sprite, room)
@@ -218,7 +377,7 @@ class Coin(GameObject):
 class Enemy(GameObject):
     def __init__(self, x, y, room):
         super().__init__(x, y, monster_sprite, room)
-        self.health = random.randint(1, level)
+        self.health = random.randint(2, level+1)
         self.target_x = self.x
         self.target_y = self.y
         self.x_offset = math.cos(random.randint(1, 20)/math.pi*2)*random.randint(40, 140)
@@ -229,6 +388,8 @@ class Enemy(GameObject):
         self.damage = 1
         self.speed = random.uniform(0.4, 1+(level/5))
     def take_damage(self):
+        global animation_objects
+        animation_objects.append(DamageAnim(0.3, animation_objects, (255, 0, 0), self))
         self.health -= Player.damage
         if self.health <= 0:
             self.die()
@@ -297,9 +458,10 @@ class Bullet(GameObject):
         pygame.draw.circle(window, (255, 0, 0), ((-cam_x+WW/2) + self.x, (-cam_y+WH/2)+ self.y), 5)
     def destroy_self(self):
         self.current_room.gameobjects.remove(self)
+
 class Player(GameObject):
     starting_speed = 5
-    starting_health = 1
+    starting_health = 50
     damage = 1
     #therange is the lifetime of the bulletin seconds
     bullet_lifetime = 0.2
@@ -317,10 +479,18 @@ class Player(GameObject):
         self.invincibility_start_time = 0
 
         self.__last_shot_time = time.time()
-        arial_font = pygame.font.SysFont("Arial", 24)
-        self.text = UIText(20, 0, f"{coins} Coins Collected", arial_font, (255, 255, 0))
+
         global ingame_ui_objects
-        ingame_ui_objects.append(self.text)
+        ingame_ui_objects.append(UICircle(30, 30, 20, (255, 255, 0)))
+        arial_font = pygame.font.SysFont("Arial", 32)
+
+        self.coin_text = UIText(55, 14, f"{coins}", arial_font, (255, 255, 0))
+        ingame_ui_objects.append(self.coin_text)
+        self.max_health_text = UIText(10, 60, "♡"*Player.starting_health, arial_font, (255, 0, 0))
+        ingame_ui_objects.append(self.max_health_text)
+        self.health_text = UIText(10, 60, "♥"*self.health, arial_font, (255, 0, 0))
+        ingame_ui_objects.append(self.health_text)
+        
 
     def update(self, window):
         super().update(window)
@@ -329,7 +499,7 @@ class Player(GameObject):
         self.__collision()
         if time.time()-self.__last_shot_time >= Player.fire_rate:
             self.__shoot()
-
+        
     def update_collision(self):
         self.__collision()
 
@@ -360,12 +530,11 @@ class Player(GameObject):
             move.scale_to_length(self.speed)
             self.move(self.x + round(move.x), self.y + round(move.y))
 
-
-
         global cam_target_y
         global cam_target_x
         cam_target_y = self.y
         cam_target_x = self.x
+
     def __shoot(self):
         if not SHOOT_UP and not SHOOT_DOWN and not SHOOT_LEFT and not SHOOT_RIGHT: return
         bullet = Bullet(self.x, self.y, self.current_room, [0, 0])
@@ -375,9 +544,21 @@ class Player(GameObject):
         if SHOOT_RIGHT: bullet.direction = [0, 1]
         self.current_room.gameobjects.append(bullet)
         self.__last_shot_time = time.time()
+
+    def start_invincibility(self):
+        self.invincibility_start_time = time.time()
+        #we use the damaganim but in white to signal invincibility
+        global animation_objects
+        #1.5 is the time the player is invincible
+        animation_objects.append(DamageAnim(1.5, animation_objects, (255, 255, 255), self))
+
     def take_damage(self, amount):
         if time.time()-self.invincibility_start_time < 1.5: return
+
+        global animation_objects
+        animation_objects.append(DamageAnim(0.3, animation_objects, (255, 0, 0), self))
         self.health -= amount
+        self.health_text.text = str("♥"*self.health)
         if self.health <= 0:
             self.die()
     def die(self):
@@ -386,7 +567,7 @@ class Player(GameObject):
         global coins
         coins += 1
         self.current_room.gameobjects.remove(coin)
-        self.text.text = f"{coins} Coins Collected"
+        self.coin_text.text = f"{coins}"
 
 class Room:
     def __init__(self, location, is_first):
@@ -460,11 +641,19 @@ class Hallway:
                             int((self.room1.x+self.room1.w/2) - HALLWAY_WIDTH/2))]
             point2 = [self.room2.y - self.room2.h/2, random.randint(int((self.room2.x-self.room2.w/2) + HALLWAY_WIDTH/2), 
                             int((self.room2.x+self.room2.w/2) - HALLWAY_WIDTH/2))]
+            #fix some bug when the points are exactly against eachother
+            if point1[0] == point2[0]:
+                point1[0]+=10
+                point2[0] -=10
             direction = "y"
         else:
             point1 = [random.randint(int((self.room1.y-self.room1.h/2) + HALLWAY_WIDTH/2), int((self.room1.y+self.room1.h/2) - HALLWAY_WIDTH/2)), self.room1.x + self.room1.w/2]
             point2 = [random.randint(int((self.room2.y-self.room2.h/2) + HALLWAY_WIDTH/2), int((self.room2.y+self.room2.h/2) - HALLWAY_WIDTH/2)), self.room2.x - self.room2.w/2]
             direction = "x"
+            #fix some bug when the points are exactly against eachother
+            if point1[1] == point2[1]:
+                point1[1]+=10
+                point2[1] -=10
         return point1, point2, direction
 
     def render(self, window):
@@ -472,7 +661,6 @@ class Hallway:
             pygame.draw.line(window, (155, 155, 0), ((-cam_x+WW/2) + (self.points[i][1]),(-cam_y+WH/2) + (self.points[i][0])),\
                                                 ((-cam_x+WW/2) + (self.points[i+1][1]),(-cam_y+WH/2) + (self.points[i+1][0])), 2)
             
-
 class Map:
     def __init__(self, window):
 
@@ -489,7 +677,7 @@ class Map:
         self.__generate_hallways()
 
         elevator_room = random.choice(self.rooms)
-        elevator_room.gameobjects.append(Elevator(elevator_room.x, elevator_room.y, elevator_room))
+        elevator_room.gameobjects.insert(0, Elevator(elevator_room.x, elevator_room.y, elevator_room))
         self.player = Player(self.rooms[0].x-(self.rooms[0].w/2)+30, self.rooms[0].y-(self.rooms[0].h/2)+50, self.rooms[0], len(self.rooms))
 
 
@@ -565,14 +753,18 @@ class Map:
         self.player.current_room.render(self.window)
         self.player.render(self.window)
 
+        for i in animation_objects:
+            i.animate(self.window)
         
 
         for room in self.rooms:
             room.render_outline(self.window)
 
-        
+
 
 def load_new_map():
+    global current_menu
+    current_menu = None
     global ingame_ui_objects
     ingame_ui_objects.clear()
     global current_map
@@ -641,17 +833,28 @@ def main():
 
     clock = pygame.time.Clock()
 
-    global current_map
-    current_map = Map(window)
-
+    #global current_map
+    #current_map = Map(window)
+    global current_menu
+    current_menu = MainMenu()
     while True:
         
         gather_input()
         
+        #we only update the menu if its open
+        if current_menu != None:
+            current_menu.update()
+            window.fill((0, 0, 0))
+
+            try: current_menu.render()
+            except: pass
+            pygame.display.flip()
+
+            clock.tick(60)
+            continue
+
         current_map.update()
-
         current_map.update_collision()
-
         window.fill((0, 0, 0))
         current_map.render()
 
