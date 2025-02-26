@@ -2,10 +2,12 @@ import pygame
 import random
 import math
 import time
+import json
+
 TITLE = "Rogue"
 
-WH = 480*2
-WW = 620*2
+WH = 800
+WW = 1200
 
 HALLWAY_WIDTH = 128
 
@@ -13,7 +15,7 @@ robot_sprite = pygame.image.load("robot.png")
 robot_sprite = pygame.transform.scale(robot_sprite, (16, 32))
 
 door_sprite = pygame.image.load("door.png")
-door_sprite = pygame.transform.scale(door_sprite, (16, 32))
+#door_sprite = pygame.transform.scale(door_sprite, (16, 32))
 
 coin_sprite = pygame.image.load("coin.png")
 coin_sprite = pygame.transform.scale(coin_sprite, (16, 16))
@@ -44,7 +46,6 @@ ENTER = False
 #these dont change between leves
 level = 0
 enemies_killed = 0
-coins = 0
 
 window = None
 ingame_ui_objects = []
@@ -74,7 +75,7 @@ def update_camera_position():
     cam_y = cam_y + ((cam_target_y-cam_y)/cam_lerp_weight)
     cam_x = cam_x + ((cam_target_x-cam_x)/cam_lerp_weight)
 
-
+#UI OBJECTS
 class UIObject:
     def __init__(self, x, y):
         self.x = x
@@ -152,6 +153,7 @@ class UIButton(UIObject):
             pygame.draw.rect(window, (255, 255, 255), (self.x, self.y, self.w, self.h), 3)
         self.ui_text.render(window)
 
+#MENUS
 class Menu:
     def __init__(self):
         self.ui_objects = []
@@ -187,6 +189,11 @@ class Menu:
 class MainMenu(Menu):
     def __init__(self):
         super().__init__()
+
+        large_arial_font = pygame.font.SysFont("Arial", 100)
+        title_text = UIText(200, 150, f"Industrial Dungeons", large_arial_font, (255, 255, 255))
+        self.ui_objects.append(title_text)
+
         pb_w = 300
         pb_h = 80
         arial_font = pygame.font.SysFont("Arial", 32)
@@ -198,7 +205,7 @@ class MainMenu(Menu):
                                 pb_text, 
                                 (30, 30, 30), 
                                 True, 
-                                load_new_map)
+                                new_game)
         self.buttons.append(self.play_btn)
 
         qb_w = 300
@@ -222,54 +229,140 @@ class IntermissionMenu(Menu):
         self.ui_objects.append(UICircle(30, 30, 20, (255, 255, 0)))
         arial_font = pygame.font.SysFont("Arial", 32)
 
-        self.coin_text = UIText(55, 14, str(coins), arial_font, (255, 255, 0))
+        self.coin_text = UIText(55, 14, str(Player.coins), arial_font, (255, 255, 0))
         self.ui_objects.append(self.coin_text)
         self.max_health_text = UIText(10, 60, "♥"*Player.starting_health, arial_font, (255, 0, 0))
         self.ui_objects.append(self.max_health_text)
 
-        self.__generate_button(100, "Upgrade Health", 50, self.__upgrade_health)
-        self.__generate_button(200, "Upgrade Damage", 32, self.__upgrade_damage)
-        self.__generate_button(300, "Upgrade Speed", 48, self.__upgrade_speed)
-        self.__generate_button(400, "Upgrade Firerate", 40, self.__upgrade_firerate)
-        self.__generate_button(500, "Upgrade Range", 48, self.__upgrade_range)
-        self.__generate_button(700, "Continue", 80, load_new_map)
+        self.damage_text = UIText(10, 90, f"Damage: {Player.damage}", arial_font, (255, 0, 0))
+        self.ui_objects.append(self.damage_text)
+
+        self.speed_text = UIText(10, 120, f"Speed: {Player.starting_speed}", arial_font, (0, 0, 255))
+        self.ui_objects.append(self.speed_text)
+
+        self.fire_rate_text = UIText(10, 150, f"Firerate: {round(Player.fire_rate, 2)}", arial_font, (255, 255, 255))
+        self.ui_objects.append(self.fire_rate_text)
+
+        self.bullet_lifetime_text = UIText(10, 180, f"Bullet Lifetime: {round(Player.bullet_lifetime, 2)}", arial_font, (255, 255, 255))
+        self.ui_objects.append(self.bullet_lifetime_text)
+        
+
+        self.health_btn, self.health_cost_text = self.__generate_button(100, "Upgrade Health", 50, self.__upgrade_health, Player.level_health)
+
+        self.damage_btn, self.damage_cost_text = self.__generate_button(200, "Upgrade Damage", 32, self.__upgrade_damage, Player.level_damage)
+
+        self.speed_btn, self.speed_cost_text = self.__generate_button(300, "Upgrade Speed", 48, self.__upgrade_speed, Player.level_speed)
+
+        self.firerate_btn, self.firerate_cost_text = self.__generate_button(400, "Upgrade Firerate", 40, self.__upgrade_firerate, Player.level_firerate)
+
+        self.range_btn, self.range_cost_text = self.__generate_button(500, "Upgrade Range", 48, self.__upgrade_range, Player.level_range)
+
+        self.continue_btn = self.__generate_button(700, "Continue", 80, load_new_map, None)
+
         self.buttons[0].selected = True
 
 
-    def __generate_button(self, y, text, text_x, func):
+    def __generate_button(self, y, text, text_x, func, attribute_lvl):
         w = 300
         h = 80
         x = WW//2-w//2
         arial_font = pygame.font.SysFont("Arial", 32)
 
         textObj = UIText(x+text_x, y+18, text, arial_font, (255, 255, 255))
-        self.btn = UIButton(x, y, w, h, textObj, (30, 30, 30), False, func)
-        self.buttons.append(self.btn)
+        
+        btn = UIButton(x, y, w, h, textObj, (30, 30, 30), False, func)
+        self.buttons.append(btn)
+        if attribute_lvl == None:
+            return btn
+        cost_text = UIText(x+w+10, y+18, f"LEVEL: {attribute_lvl}    COST: {20+attribute_lvl*2}", arial_font, (255, 255, 0))
+        self.ui_objects.append(cost_text)
+        return btn, cost_text
 
-    def remove_coins(amount):
-        if coins - amount >= 0:
-            coins -= amount
-            self.coin_text.text = str(coins)
+    def remove_coins(self, amount):
+        if Player.coins - amount >= 0:
+            Player.coins -= amount
+            self.coin_text.text = str(Player.coins)
             return True
         return False
 
     def __upgrade_health(self):
-        Player.starting_health += 1
-        self.max_health_text.text = "♥"*Player.starting_health
-        print("upgraded health")
+        if self.remove_coins((20+Player.level_health*2)):
+            Player.level_health += 1
+            Player.starting_health += 1
+            self.max_health_text.text = "♥"*Player.starting_health
+            self.health_cost_text.text = f"LEVEL: {Player.level_health}    COST: {20+Player.level_health*2}"
+            print("upgraded health")
 
     def __upgrade_damage(self):
-        print("upgraded damage")
+        if self.remove_coins((20+Player.level_damage*2)):
+            Player.level_damage += 1
+            Player.damage += 1
+            self.damage_text.text = f"Damage: {Player.damage}"
+            self.damage_cost_text.text = f"LEVEL: {Player.level_damage}    COST: {20+Player.level_damage*2}"
+            print("upgraded damage")
 
     def __upgrade_speed(self):
-        print("upgraded speed")
+        if self.remove_coins((20+Player.level_speed*2)):      
+            Player.level_speed += 1
+            Player.starting_speed += 0.5
+            self.speed_text.text = f"Speed: {Player.starting_speed}"
+            self.speed_cost_text.text = f"LEVEL: {Player.level_speed}    COST: {20+Player.level_speed*2}"
+            print("upgraded speed")
 
     def __upgrade_firerate(self):
-        print("upgraded firerate")
+        if self.remove_coins((20+Player.level_firerate*2)): 
+            Player.level_firerate += 1
+            Player.fire_rate = pygame.math.lerp(Player.fire_rate, 0.1, 0.25)
+            self.fire_rate_text.text = f"Firerate: {round(Player.fire_rate, 2)}"
+            self.firerate_cost_text.text = f"LEVEL: {Player.level_firerate}    COST: {20+Player.level_firerate*2}"
+            print("upgraded firerate")
 
     def __upgrade_range(self):
+        if self.remove_coins((20+Player.level_range*2)):      
+            Player.level_range += 1
+            Player.bullet_lifetime += 0.2
+            self.bullet_lifetime_text.text = f"Bullet Lifetime: {round(Player.bullet_lifetime, 2)}"
+            self.range_cost_text.text = f"LEVEL: {Player.level_range}    COST: {20+Player.level_range*2}"
         print("upgraded range")
 
+class DeathMenu(Menu):
+    def __init__(self):
+        super().__init__()
+
+        large_arial_font = pygame.font.SysFont("Arial", 120)
+        death_text = UIText(300, 150, f"YOU DIED", large_arial_font, (255, 0, 0))
+        self.ui_objects.append(death_text)
+
+        pb_w = 300
+        pb_h = 80
+        arial_font = pygame.font.SysFont("Arial", 32)
+        pb_text = UIText(WW//2-pb_w//2+80, WH//2-pb_h//2+18, "New Game", arial_font, (255, 255, 255))
+        self.play_btn = UIButton(WW//2-pb_w//2, 
+                                WH//2-pb_h//2, 
+                                pb_w, 
+                                pb_h, 
+                                pb_text, 
+                                (30, 30, 30), 
+                                True, 
+                                new_game)
+        self.buttons.append(self.play_btn)
+
+        qb_w = 300
+        qb_h = 80
+        qb_x = WW//2-qb_w//2
+        qb_y = WH//2-qb_h//2+100
+        qb_text = UIText(qb_x+80, qb_y+18, "Main Menu", arial_font, (255, 255, 255))
+        self.quit_btn = UIButton(qb_x, 
+                                qb_y, 
+                                qb_w, 
+                                qb_h, 
+                                qb_text, 
+                                (30, 30, 30), 
+                                False, 
+                                lambda: load_menu(MainMenu()))
+        self.buttons.append(self.quit_btn)
+
+#ANIMATIONS
 class AnimObject:
     def __init__(self, length, animation_list):
         self.start_time = time.time()
@@ -303,7 +396,7 @@ class DamageAnim(AnimObject):
         window.blit(self.rect, ((-cam_x+WW/2) + (self.x-self.w/2), (-cam_y+WH/2) + (self.y-self.h/2)))
 
 
-
+#INGAME OBJECTS
 class GameObject:
     def __init__(self, x, y, sprite, room):
         self.x = x
@@ -520,13 +613,24 @@ class Bullet(GameObject):
         self.current_room.gameobjects.remove(self)
 
 class Player(GameObject):
+
+    coins = 0
+
+    level_health = 1
+    level_damage = 1
+    level_speed = 1
+    level_firerate = 1
+    level_range = 1
+
     starting_speed = 5
     starting_health = 2
     damage = 1
     #therange is the lifetime of the bulletin seconds
-    bullet_lifetime = 0.2
-    bullet_speed = 8
+    bullet_lifetime = 0.15
+    bullet_speed = 10
     fire_rate = 1.0
+
+    
 
     def __init__(self, x, y, room, room_count):
         super().__init__(x, y, robot_sprite, room)
@@ -544,12 +648,25 @@ class Player(GameObject):
         ingame_ui_objects.append(UICircle(30, 30, 20, (255, 255, 0)))
         arial_font = pygame.font.SysFont("Arial", 32)
 
-        self.coin_text = UIText(55, 14, f"{coins}", arial_font, (255, 255, 0))
+        self.coin_text = UIText(55, 14, f"{Player.coins}", arial_font, (255, 255, 0))
         ingame_ui_objects.append(self.coin_text)
+
         self.max_health_text = UIText(10, 60, "♡"*Player.starting_health, arial_font, (255, 0, 0))
         ingame_ui_objects.append(self.max_health_text)
         self.health_text = UIText(10, 60, "♥"*self.health, arial_font, (255, 0, 0))
         ingame_ui_objects.append(self.health_text)
+
+        self.damage_text = UIText(10, 90, f"Damage: {Player.damage}", arial_font, (255, 0, 0))
+        ingame_ui_objects.append(self.damage_text)
+
+        self.speed_text = UIText(10, 120, f"Speed: {Player.starting_speed}", arial_font, (0, 0, 255))
+        ingame_ui_objects.append(self.speed_text)
+
+        self.fire_rate_text = UIText(10, 150, f"Firerate: {round(Player.fire_rate, 2)}", arial_font, (255, 255, 255))
+        ingame_ui_objects.append(self.fire_rate_text)
+
+        self.bullet_lifetime_text = UIText(10, 180, f"Bullet Lifetime: {round(Player.bullet_lifetime, 2)}", arial_font, (255, 255, 255))
+        ingame_ui_objects.append(self.bullet_lifetime_text)
         
 
     def update(self, window):
@@ -622,12 +739,11 @@ class Player(GameObject):
         if self.health <= 0:
             self.die()
     def die(self):
-        load_menu(MainMenu())
+        load_menu(DeathMenu())
     def __collect_coin(self, coin):
-        global coins
-        coins += 1
+        Player.coins += 1
         self.current_room.gameobjects.remove(coin)
-        self.coin_text.text = f"{coins}"
+        self.coin_text.text = f"{Player.coins}"
 
 class Room:
     def __init__(self, location, is_first):
@@ -653,7 +769,7 @@ class Room:
                 temp_enemy.y = random.randint((self.y-self.h//2)+(temp_enemy.collider.h//2), (self.y+self.h//2)-(temp_enemy.collider.h//2))
                 self.gameobjects.append(temp_enemy)
         #DEBUGGIN
-        self.gameobjects.append(Elevator(self.x, self.y, self))
+        #self.gameobjects.append(Elevator(self.x, self.y, self))
 
     def update(self, window):
         for gameobject in self.gameobjects:
@@ -831,6 +947,26 @@ def load_menu(menu):
     global ingame_ui_objects
     ingame_ui_objects.clear()
     
+def new_game():
+    Player.coins = 0
+
+    Player.level_health = 1
+    Player.level_damage = 1
+    Player.level_speed = 1
+    Player.level_firerate = 1
+    Player.level_range = 1
+
+    Player.starting_speed = 5
+    Player.starting_health = 2
+    Player.damage = 1
+    #therange is the lifetime of the bulletin seconds
+    Player.bullet_lifetime = 0.15
+    Player.bullet_speed = 10
+    Player.fire_rate = 1.0
+
+    enemies_killed = 0
+
+    load_new_map()
 
 def load_new_map():
     global current_menu
@@ -906,7 +1042,8 @@ def main():
     pygame.init()
     pygame.display.set_caption(TITLE)
     global window
-    window = pygame.display.set_mode((WW, WH))
+    flags = pygame.FULLSCREEN | pygame.SCALED
+    window = pygame.display.set_mode((WW, WH), flags)
 
     clock = pygame.time.Clock()
 
@@ -933,7 +1070,7 @@ def main():
         try:current_map.update_collision()
         except: pass
 
-        window.fill((0, 0, 0))
+        window.fill((14, 1, 15))
 
         try:current_map.render()
         except: pass
@@ -944,6 +1081,8 @@ def main():
         pygame.display.flip()
 
         clock.tick(60)
+
+
 
 
 if __name__ == "__main__":
